@@ -8,7 +8,7 @@ Databricks Platform offers a variety of languages to perform data engineering ta
 
 This is an end to end project, that will help us go over the different aspect of <b> databricks</b> integration, following a medallion architecture.
 
-![image](https://github.com/tmbothe/Data-Engineering-with-databricks/blob/main/images/dbt_project.jpg)
+![image](https://github.com/tmbothe/databricks-end-to-end-project/blob/main/images/dbt_project.jpg)
 
 As we can see on the image above, the whole pipeline is typical Data engineering project that:
 * Data coming from external sources is loaded into a **landing zone** in  Azure blob storage
@@ -35,21 +35,21 @@ The dataset we are going to be using is a collections of roads and traffic data 
 
 Here is the over all structure of the data.
 
-![image](https://github.com/tmbothe/Data-Engineering-with-databricks/blob/main/images/schema.jpg)
+![image](https://github.com/tmbothe/databricks-end-to-end-project/blob/main/images/schema.jpg)
 
 ## Project Implementation 
 
  As mentioned ealier, we are going to be using the medallion architecture for this project. We are going to build model for each step in the process.
 
  ### storage design 
- ![image](https://github.com/tmbothe/Data-Engineering-with-databricks/blob/main/images/storage_desing.jpg)
+ ![image](https://github.com/tmbothe/databricks-end-to-end-project/blob/main/images/storage_desing.jpg)
   
 For storage, we will be using Azure ADLS Gen2 storage. We will be creating 3 diffent containers in Azure blob storage:
 * **Unity catalog root** is automatically created when a databricks workspace is created in Azure platfrom and store all project metadata
 * **Medallion**  this is the container that will be storing all managed ojects in different layers. We will create 3 diffent subfolders (bronze, silver, gold)
 * **Umnmanage storage** will have two containers, one for the landing data coming in, and a checkpoint location to manage incremental load.
 
-![image](https://github.com/tmbothe/Data-Engineering-with-databricks/blob/main/images/initial_project.jpg)
+![image](https://github.com/tmbothe/databricks-end-to-end-project/blob/main/images/initial_project.jpg)
 
 Our project catalog in databricks is called **dbt_project_catalog**. As we can see on the image above, it currently has only the data from our landing zone. We are going to start adding the other layers through dbt models.
 
@@ -78,7 +78,7 @@ The data sources defines where the data is originated.  We will define two data 
 The code for different layer can be found in the project under **models**, but below is the final structure in dbt.
 
 
-![image](https://github.com/tmbothe/Data-Engineering-with-databricks/blob/main/images/project_structure_in_dbt.jpg)
+![image](https://github.com/tmbothe/databricks-end-to-end-project/blob/main/images/project_structure_in_dbt.jpg)
 
 #### Ensuring data quality with tests
 
@@ -127,10 +127,10 @@ We want to track the different data coming into the traffic table as it is the o
 
 After bulding all layers, below the the over all lineage in dbt.
 
-![image](https://github.com/tmbothe/Data-Engineering-with-databricks/blob/main/images/full_project_dag.jpg)
+![image](https://github.com/tmbothe/databricks-end-to-end-project/blob/main/images/full_project_dag.jpg)
 
 Below is the final project snapshot in databricks.
 
-![image](https://github.com/tmbothe/Data-Engineering-with-databricks/blob/main/images/project_snapshot_databricks.jpg)
+![image](https://github.com/tmbothe/databricks-end-to-end-project/blob/main/images/project_snapshot_databricks.jpg)
 
 #### Project deployment
