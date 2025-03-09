@@ -49,88 +49,148 @@ For storage, we will be using Azure ADLS Gen2 storage. We will be creating 3 dif
 * **Medallion**  this is the container that will be storing all managed ojects in different layers. We will create 3 diffent subfolders (bronze, silver, gold)
 * **Umnmanage storage** will have two containers, one for the landing data coming in, and a checkpoint location to manage incremental load.
 
-![image](https://github.com/tmbothe/databricks-end-to-end-project/blob/main/images/initial_project.jpg)
+This structure is for the development environment, but we can follow the same pattern for test and produnction
 
-Our project catalog in databricks is called **dbt_project_catalog**. As we can see on the image above, it currently has only the data from our landing zone. We are going to start adding the other layers through dbt models.
+### Setting  storage and external locations
+We will have created all containers in Azure, and created all external storage for our different layers. The code can be found in **01-initial-config** in the repos.
+We have class that will be getting all external location url and make available to all layers.
+Since the intention is to be able to deploy in diffent environment, we have also designed a widdget to capture the environment that can be Dev, test or production.
 
-### dbt models
-In dbt, models are only transformation applied to the data. It is a combination of select statement added to a file that get materialized to the target system as a table or view.
-
-#### project configuration 
-Before creating the different layers, one key file for any dbt project id the **dbt_project.yml** which define how all the objects in our different layers are going to be materialized. Below is a snapshot of our project configuration. As we can see, all our ojects will be materialized as tables.
 ```
-models:
-  dbt_project_catalog:
-    bronze:
-      +materialized: table
-      +schema: bronze
-    silver:
-      +materialized: table
-      +schema: silver
-    gold:
-      +materialized: table
-      +schema: gold
+class InitialConfig():
+    def __init__(self):
+        self.landing_path= spark.sql("DESCRIBE EXTERNAL LOCATION `landing`").select("url").collect()[0][0] 
+        self.checkpoint_path= spark.sql("DESCRIBE EXTERNAL LOCATION `checkpoint`").select("url").collect()[0][0]
+        self.silver_path= spark.sql("DESCRIBE EXTERNAL LOCATION `silver`").select("url").collect()[0][0]
+        self.bronze_path= spark.sql("DESCRIBE EXTERNAL LOCATION `bronze`").select("url").collect()[0][0]
+        self.gold_path= spark.sql("DESCRIBE EXTERNAL LOCATION `gold`").select("url").collect()[0][0]
+        self.root_path = spark.sql("DESCRIBE EXTERNAL LOCATION `sbit-managed`").select("url").collect()[0][0]
 ``` 
-#### Data sources
-The data sources defines where the data is originated.  We will define two data sources that represent the two tables in our landing zone.
+this code will display all the location as below:
+ ![image](https://github.com/tmbothe/databricks-end-to-end-project/blob/main/images/init_location.jpg)
 
-#### Data layers
-The code for different layer can be found in the project under **models**, but below is the final structure in dbt.
+ ### Initial setup
+ In the initial setup notebook **02-initial-setup.ipynb**, we have designed different functions to perform the tasks below:
+ * class to set environment and locations
+ * create catalog (dev,qa, prod)
+ * create schemas (bronze, silver, gold)
+ * create initals tables in the bronze layer (raw_taffic and raw_roads)
+ * a function to test that the environment is setup properly
+ * a function to validate that all tables were created
+ 
+ below is the code to call all functions above. The implementation can be found in the notebook
+ ```
+   def initial_setup(self):
+        import time 
+        print(f"Initializing the environment. Please wait...")
+        self.create_catalog()
+        self.create_bronze_Schema()
+        self.create_silver_Schema()
+        self.create_gold_Schema()
+        self.create_roads_table()
+        self.create_raw_traffic_table()
+        print(f"Environment initialized.")
+ ```
 
-
-![image](https://github.com/tmbothe/databricks-end-to-end-project/blob/main/images/project_structure_in_dbt.jpg)
-
-#### Ensuring data quality with tests
-
-The best way is to make data quality a real thing and not just hope it defines exactly what we expect as input and output and then check that the data adheres to these requirements. This is the essence of being able to define runnable tests on our data. dbt allows two types of tests. Generic tests and singular tests.
-
-**Generic tests**, also called schema tests, are tests that are generic in nature and are therefore codified in a parametrized query, which can be applied to any model or any column in any model by naming them in a YAML configuration file.
-```
-version: 2
-
-models:
-  - name: bonze_roads
-    columns:
-      - name: Road_category
-        tests:
-          - accepted_values:
-              values: ['TM','PA','TA','M','PM']
-
-      - name:  Road_ID
-        tests:
-          - unique
-          - not_null
-  - name: bronze_traffic
-    columns:
-      - name: Record_ID
-        tests:
-          - unique
-          - not_null
-```
-Here is an example of generic test, that checks if columns are unique or not null. The one in the column **Road category** contraints the values of that columns.
-
-**Singular tests** are the most generic form of test, as you can test everything that you can express in SQL. You just need to write a SQL query that returns the rows that do not pass your test, no matter what you would like to test, whether individual calculations, full table matches, or subsets of columns in multiple tables.
+### Bronze layer ingestion 
+The bronze layer will read data directly from the landing zone using **structure streaming** then load data in the bronze tables.
+*  We first read steam for traffic and roads data
+*  write the stream in bronze tables
+*  validate count
 
 ```
-SELECT *
-FROM {{ ref("bronze_roads") }}
-WHERE Total_Link_Length_Km<0 
-   or Total_Link_Length_Miles<0
-   or All_Motor_Vehicles <0
+   def load_bronze_tables(self):
+        print('Loading bronze tables...', end='')
+        df_traffic = self.read_raw_traffic()
+        df_roads = self.read_raw_roads()
+        self.write_raw_traffic(df_traffic)
+        self.write_raw_roads(df_roads)
+        print('Loading bronze tables completed')
+``` 
+
+### Silver layer ingestion
+The silver layer is implemented using the same pattern that we used in the bronze layer, but few transformations are added and data store in silver schema.
+*  read from bronze layer
+*  transform road categrory
+*  transform road type
+*  remove duplicates
+*  fill null with appropriate string and numeric values
+*  compute count for electric vehicles
+*  computue count for motor vehicles
+*  write final datafrome to the silver shema
+
+```
+    def load_silver_traffic(self, table_name='silver.traffic_data'):
+        print(f'Loading silver table {table_name}')
+        df=self.read_bronze_traffic()
+        df=self.remove_duplicates(df)
+        columns= df.schema.names
+        df=self.remove_nulls(df,columns)
+        df_clean=self.ev_count_add(df)
+        df_clean=self.motor_count_add(df_clean)
+        df_clean=self.create_transformed_time(df_clean)
+        self.write_silver_traffic(df_clean)
+        print(f'Loading silver table {table_name} completed')
+
+    def load_silver_roads(self, table_name='silver.roads_data'):
+        print(f'Loading silver table {table_name}')
+        df=self.read_bronze_roads()
+        df=self.remove_duplicates(df)
+        columns= df.schema.names
+        df=self.remove_nulls(df,columns)
+        df_clean=self.create_transformed_time(df)
+        df=self.road_Category(df)
+        df=self.road_Type(df)
+        self.write_silver_roads(df)
+        print(f'Loading silver table {table_name} completed')
+
+    def load_silver_tables(self):
+        print('Loading silver tables')
+        self.load_silver_traffic()
+        self.load_silver_roads()
+        print('Loading silver tables completed')
 ```
 
-in this example we just test that the values of the columns cannot take a negative values.
+### Gold layer ingestion 
+the code can be found in **05-gold-loader.ipynb**
+```
+  def load_gold_traffic(self):
+      print("Loading gold traffic")
+      df = self.read_silver_traffic()
+      df = self.create_vehicle_intensity(df)
+      df = self.create_load_time(df)
+      self.write_gold_traffic(df)
+      print("Gold traffic loaded")
 
-#### Implementing SCD(slowly changing dimension)
-We can implement SCD type 2 using the concept on snapshots. This can be useful if we want to tract changes overtime, or reduce the transformation time as we will be processing only new incoming rows.
-We want to track the different data coming into the traffic table as it is the one that get updated frequently. The full code can be found in the project under **snapshots** folder.
 
-After bulding all layers, below the the over all lineage in dbt.
+    def load_gold_roads(self):
+      print("Loading gold roads")
+      df = self.read_silver_roads()
+      df = self.create_load_time(df)
+      self.write_gold_roads(df)
+      print("Gold roads loaded")
 
-![image](https://github.com/tmbothe/databricks-end-to-end-project/blob/main/images/full_project_dag.jpg)
+    def load_gold_tables(self):
+      print("Loading gold tables")
+      self.load_gold_traffic()
+      self.load_gold_roads()
+      print("Gold tables loaded")
+```
 
-Below is the final project snapshot in databricks.
+### integration testing 
+After bulding all different layers and test individually, we can setup another notebook that can dynamically create a catalog, create all the tables, ingest the data and test that the result matches our expectations
+the code can be found in **07-streaming-integration-test.ipynb**.
 
-![image](https://github.com/tmbothe/databricks-end-to-end-project/blob/main/images/project_snapshot_databricks.jpg)
+![image](https://github.com/tmbothe/databricks-end-to-end-project/blob/main/images/end-end-testing.jpg)
 
-#### Project deployment
+after running the code above we see that: 
+
+![image](https://github.com/tmbothe/databricks-end-to-end-project/blob/main/images/end_end_qa.jpg)
+
+We can see that our **qa** environment was created, all tables in the bronze, silver and gold created. We can also see an snapshot of the data in the gold environment.
+
+### Job workflow scheduling 
+
+![image](https://github.com/tmbothe/databricks-end-to-end-project/blob/main/images/workflow.jpg)
+
+We can also set up a workflow for our notebooks to make sure all layers are well populated.
